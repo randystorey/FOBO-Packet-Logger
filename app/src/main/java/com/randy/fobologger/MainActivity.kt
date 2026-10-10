@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private val FEAF = ParcelUuid.fromString("0000feaf-0000-1000-8000-00805f9b34fb")
     private val D11 = UUID.fromString("18ee2ef5-263d-4559-959f-4f9c429f9d11")
     private val D12 = UUID.fromString("18ee2ef5-263d-4559-959f-4f9c429f9d12")
+    private val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     private val scanner get() = (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter.bluetoothLeScanner
 
@@ -72,13 +73,9 @@ class MainActivity : Activity() {
                 addLine("${now()}\tSERVICE\t${s.uuid}")
                 s.characteristics.forEach { c -> addLine("${now()}\tCHAR\t${c.uuid}\tprops=${c.properties}") }
             }
-            // Observation mode: READ only. Never writes to D11 or any sensor characteristic.
-            val svc = g.getService(FEAF.uuid)
-            val c11 = svc?.getCharacteristic(D11)
-            if (c11 != null && c11.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) {
-                addLine("${now()}\tGATT_READ_REQUEST\tD11")
-                if (Build.VERSION.SDK_INT >= 33) g.readCharacteristic(c11) else @Suppress("DEPRECATION") g.readCharacteristic(c11)
-            } else readD12(g)
+            // v4 observation mode: enable standard CCCD indications on D12 only.
+            // Never writes to D11 or to either FOBO characteristic value.
+            subscribeD12(g)
         }
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, statusCode: Int) {
@@ -89,8 +86,22 @@ class MainActivity : Activity() {
             addLine("${now()}\tGATT_READ\t${short(c.uuid)}\tstatus=$statusCode\tvalue=${value.toHex()}")
             if (c.uuid == D11) readD12(g)
         }
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, statusCode: Int) {
+            addLine("${now()}\tCCCD_WRITE\t${short(d.characteristic.uuid)}\tstatus=$statusCode\tvalue=${d.value?.toHex() ?: ""}")
+            if (d.characteristic.uuid == D12 && statusCode == BluetoothGatt.GATT_SUCCESS) {
+                addLine("${now()}\t=== D12 INDICATIONS ARMED · NO D11 COMMAND WRITES ===")
+                runOnUiThread { status.text = "Connected · D12 indications armed · no D11 writes" }
+            }
+        }
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, statusCode: Int, value: ByteArray) {
+            addLine("${now()}\tCCCD_WRITE\t${short(d.characteristic.uuid)}\tstatus=$statusCode\tvalue=${value.toHex()}")
+            if (d.characteristic.uuid == D12 && statusCode == BluetoothGatt.GATT_SUCCESS) {
+                addLine("${now()}\t=== D12 INDICATIONS ARMED · NO D11 COMMAND WRITES ===")
+                runOnUiThread { status.text = "Connected · D12 indications armed · no D11 writes" }
+            }
+        }
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
-            addLine("${now()}\tGATT_INDICATION\t${short(c.uuid)}\tvalue=${value.toHex()}")
+            addLine("${now()}\tGATT_INDICATION\t${short(c.uuid)}\tlen=${value.size}\tvalue=${value.toHex()}")
         }
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
@@ -98,13 +109,37 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun readD12(g: BluetoothGatt) {
-        val c = g.getService(FEAF.uuid)?.getCharacteristic(D12) ?: return
-        if (c.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) {
-            addLine("${now()}\tGATT_READ_REQUEST\tD12")
-            if (Build.VERSION.SDK_INT >= 33) g.readCharacteristic(c) else @Suppress("DEPRECATION") g.readCharacteristic(c)
+    private fun subscribeD12(g: BluetoothGatt) {
+        val c = g.getService(FEAF.uuid)?.getCharacteristic(D12)
+        if (c == null) {
+            addLine("${now()}\tD12_SUBSCRIBE_FAILED\treason=characteristic_missing")
+            return
         }
-        // Intentionally do NOT enable indications: doing so writes the CCCD (0x2902).
+        val supportsIndicate = c.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+        addLine("${now()}\tD12_SUBSCRIBE_REQUEST\tprops=${c.properties}\tindicate=$supportsIndicate")
+        if (!supportsIndicate) {
+            addLine("${now()}\tD12_SUBSCRIBE_FAILED\treason=indicate_not_supported")
+            return
+        }
+        val localOk = g.setCharacteristicNotification(c, true)
+        addLine("${now()}\tD12_LOCAL_NOTIFY\tok=$localOk")
+        if (!localOk) return
+        val cccd = c.getDescriptor(CCCD)
+        if (cccd == null) {
+            addLine("${now()}\tD12_SUBSCRIBE_FAILED\treason=cccd_missing")
+            return
+        }
+        addLine("${now()}\tCCCD_WRITE_REQUEST\tD12\tvalue=0200")
+        if (Build.VERSION.SDK_INT >= 33) {
+            val rc = g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
+            addLine("${now()}\tCCCD_WRITE_QUEUED\tresult=$rc")
+        } else {
+            @Suppress("DEPRECATION")
+            cccd.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+            @Suppress("DEPRECATION")
+            val queued = g.writeDescriptor(cccd)
+            addLine("${now()}\tCCCD_WRITE_QUEUED\tresult=$queued")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,8 +149,8 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20,12,20,12) }
-        root.addView(TextView(this).apply { text = "FOBO Tire Lite Diagnostic Logger v2"; textSize = 24f })
-        status = TextView(this).apply { text = "Ready · passive BLE scan + read-only GATT"; textSize = 15f }
+        root.addView(TextView(this).apply { text = "FOBO Tire Lite Diagnostic Logger v4"; textSize = 24f })
+        status = TextView(this).apply { text = "Ready · passive scan + safe D12 indication subscription"; textSize = 15f }
         root.addView(status)
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -130,12 +165,12 @@ class MainActivity : Activity() {
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         targetSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, targets) }
         row2.addView(targetSpinner, LinearLayout.LayoutParams(260, LinearLayout.LayoutParams.WRAP_CONTENT))
-        row2.addView(Button(this).apply { text = "READ GATT (NO WRITES)"; setOnClickListener { connectReadOnly() } })
+        row2.addView(Button(this).apply { text = "SUBSCRIBE D12 (NO D11 WRITES)"; setOnClickListener { connectReadOnly() } })
         row2.addView(Button(this).apply { text = "DISCONNECT"; setOnClickListener { disconnectGatt() } })
         row2.addView(Button(this).apply { text = "CLEAR"; setOnClickListener { lines.clear(); logView.text = ""; packetCounts.clear(); lastPayload.clear() } })
         root.addView(row2)
 
-        root.addView(TextView(this).apply { text = "GATT mode reads 9D11/9D12 only. It never writes commands and does not enable 9D12 indications because enabling CCCD itself requires a write."; textSize = 12f })
+        root.addView(TextView(this).apply { text = "v4 writes only the standard D12 CCCD (0x2902) to enable indications. It NEVER writes D11 or either FOBO characteristic value. Use NORMAL / REMOVED / REINSTALLED while subscribed."; textSize = 12f })
         logView = TextView(this).apply { textSize = 10f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
         val scroll = ScrollView(this).apply { addView(logView) }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -148,7 +183,7 @@ class MainActivity : Activity() {
         val d = devices[name]
         if (d == null) { Toast.makeText(this, "Scan until $name has been seen first", Toast.LENGTH_LONG).show(); return }
         disconnectGatt()
-        addLine("${now()}\t=== READ-ONLY GATT CONNECT $name ${d.address} ===")
+        addLine("${now()}\t=== SAFE D12 SUBSCRIBE CONNECT $name ${d.address} ===")
         gatt = if (Build.VERSION.SDK_INT >= 23) d.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE) else d.connectGatt(this, false, gattCallback)
     }
 
@@ -173,7 +208,7 @@ class MainActivity : Activity() {
     private fun addLine(s: String) { runOnUiThread { lines.add(s); if (lines.size > 15000) lines.removeAt(0); logView.append(s + "\n") } }
     private fun shareLog() {
         val text = lines.joinToString("\n")
-        val name = "FOBO_v2_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.txt"
+        val name = "FOBO_v4_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.txt"
         getExternalFilesDir(null)?.let { File(it, name).writeText(text) }
         (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("FOBO log", text))
         Toast.makeText(this, "Saved $name and copied log to clipboard", Toast.LENGTH_LONG).show()
