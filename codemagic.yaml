@@ -1,0 +1,14 @@
+workflows:
+  android-debug-apk:
+    name: FOBO Packet Logger v2 APK
+    environment:
+      java: 17
+    scripts:
+      - name: Build debug APK
+        script: |
+          set -e
+          cd "$CM_BUILD_DIR"
+          chmod +x gradlew
+          ./gradlew assembleDebug
+    artifacts:
+      - app/build/outputs/apk/debug/*.apk
