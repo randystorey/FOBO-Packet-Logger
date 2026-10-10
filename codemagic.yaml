@@ -4,11 +4,18 @@ workflows:
     environment:
       java: 17
     scripts:
+      - name: Install Gradle 8.9
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+          curl -L --fail --retry 3 -o /tmp/gradle-8.9-bin.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          rm -rf /tmp/gradle-8.9
+          unzip -q /tmp/gradle-8.9-bin.zip -d /tmp
+          /tmp/gradle-8.9/bin/gradle --version
       - name: Build debug APK
         script: |
-          set -e
+          set -euo pipefail
           cd "$CM_BUILD_DIR"
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          /tmp/gradle-8.9/bin/gradle --no-daemon assembleDebug
     artifacts:
       - app/build/outputs/apk/debug/*.apk
