@@ -1,6 +1,6 @@
 workflows:
   android-debug-apk:
-    name: FOBO Packet Logger v2 APK
+    name: FOBO Packet Logger v4 APK
     environment:
       java: 17
     scripts:

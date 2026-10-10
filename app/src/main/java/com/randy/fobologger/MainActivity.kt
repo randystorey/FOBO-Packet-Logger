@@ -80,21 +80,12 @@ class MainActivity : Activity() {
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, statusCode: Int) {
             addLine("${now()}\tGATT_READ\t${short(c.uuid)}\tstatus=$statusCode\tvalue=${c.value?.toHex() ?: ""}")
-            if (c.uuid == D11) readD12(g)
         }
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, statusCode: Int) {
             addLine("${now()}\tGATT_READ\t${short(c.uuid)}\tstatus=$statusCode\tvalue=${value.toHex()}")
-            if (c.uuid == D11) readD12(g)
         }
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, statusCode: Int) {
             addLine("${now()}\tCCCD_WRITE\t${short(d.characteristic.uuid)}\tstatus=$statusCode\tvalue=${d.value?.toHex() ?: ""}")
-            if (d.characteristic.uuid == D12 && statusCode == BluetoothGatt.GATT_SUCCESS) {
-                addLine("${now()}\t=== D12 INDICATIONS ARMED · NO D11 COMMAND WRITES ===")
-                runOnUiThread { status.text = "Connected · D12 indications armed · no D11 writes" }
-            }
-        }
-        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, statusCode: Int, value: ByteArray) {
-            addLine("${now()}\tCCCD_WRITE\t${short(d.characteristic.uuid)}\tstatus=$statusCode\tvalue=${value.toHex()}")
             if (d.characteristic.uuid == D12 && statusCode == BluetoothGatt.GATT_SUCCESS) {
                 addLine("${now()}\t=== D12 INDICATIONS ARMED · NO D11 COMMAND WRITES ===")
                 runOnUiThread { status.text = "Connected · D12 indications armed · no D11 writes" }
