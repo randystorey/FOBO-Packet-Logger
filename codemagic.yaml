@@ -1,21 +1,66 @@
 workflows:
   android-debug-apk:
     name: FOBO Packet Logger v4 APK
+
+    instance_type: linux_x2
+
     environment:
       java: 17
+
     scripts:
       - name: Install Gradle 8.9
         script: |
           set -euo pipefail
           cd "$CM_BUILD_DIR"
-          curl -L --fail --retry 3 -o /tmp/gradle-8.9-bin.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+
+          curl -L --fail --retry 3 \
+            -o /tmp/gradle-8.9-bin.zip \
+            https://services.gradle.org/distributions/gradle-8.9-bin.zip
+
           rm -rf /tmp/gradle-8.9
           unzip -q /tmp/gradle-8.9-bin.zip -d /tmp
+
           /tmp/gradle-8.9/bin/gradle --version
+
+      - name: Verify FOBO Logger v4
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+
+          echo "Checking Android project..."
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/java/com/randy/fobologger/MainActivity.kt
+
+          grep -q 'versionCode = 4' app/build.gradle.kts
+          grep -q 'versionName = "4.0"' app/build.gradle.kts
+
+          echo "FOBO Packet Logger v4 source verified."
+
       - name: Build debug APK
         script: |
           set -euo pipefail
           cd "$CM_BUILD_DIR"
-          /tmp/gradle-8.9/bin/gradle --no-daemon assembleDebug
+
+          /tmp/gradle-8.9/bin/gradle \
+            --no-daemon \
+            clean \
+            assembleDebug
+
+      - name: Verify APK
+        script: |
+          set -euo pipefail
+          cd "$CM_BUILD_DIR"
+
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found"
+            exit 1
+          fi
+
+          echo "APK successfully created:"
+          ls -lh "$APK"
+
     artifacts:
       - app/build/outputs/apk/debug/*.apk
